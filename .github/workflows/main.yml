@@ -1,7 +1,7 @@
 name: iOS TestFlight (manual signing)
 
 on:
-  workflow_dispatch:   # запуск из вкладки Actions → Run workflow
+  workflow_dispatch:   # запускать будем кнопкой из Actions
 
 jobs:
   build-and-upload:
@@ -14,8 +14,7 @@ jobs:
       - name: Select Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          # можно поменять на latest-stable, но у тебя уже логами светилась 16.2
-          xcode-version: "16.2"
+          xcode-version: "16.2"   # можешь поставить latest-stable, но 16.2 уже точно есть
 
       # 1) Импорт дистрибутивного сертификата (.p12) из секретов
       - name: Import code signing certificate
@@ -28,7 +27,7 @@ jobs:
       - name: Install provisioning profile
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/app.mobileprovision
+          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 -D > ~/Library/MobileDevice/Provisioning\ Profiles/app.mobileprovision
 
       # 3) Сборка архива (Release, ручная подпись из настроек Xcode)
       - name: Build archive
@@ -48,7 +47,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath $PWD/build/export
 
-      # 5) Загрузка .ipa в TestFlight через App Store Connect API key
+      # 5) Загрузка .ipa в TestFlight
       - name: Upload to TestFlight
         uses: apple-actions/upload-testflight-build@v3
         with:
