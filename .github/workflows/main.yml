@@ -33,12 +33,16 @@ jobs:
       - name: Build archive
         run: |
           xcodebuild \
-            -scheme "ExpirationDateManager" \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath $PWD/build/App.xcarchive \
-            clean archive
-
+             -scheme "ExpirationDateManager" \
+             -configuration Release \
+             -sdk iphoneos \
+             -archivePath $PWD/build/App.xcarchive \
+             -allowProvisioningUpdates \
+             DEVELOPMENT_TEAM=Y65KPLRTB5 \
+             PROVISIONING_PROFILE_SPECIFIER="WanderWalls" \
+             CODE_SIGN_STYLE=Manual \
+             PRODUCT_BUNDLE_IDENTIFIER=sw.iotalasab5.mules \
+             clean archive
       # 4) Экспорт .ipa из архива
       - name: Export IPA
         run: |
