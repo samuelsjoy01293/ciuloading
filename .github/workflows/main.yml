@@ -1,11 +1,16 @@
 name: iOS TestFlight (manual signing)
 
 on:
-  workflow_dispatch:   # запускать будем кнопкой из Actions
+  workflow_dispatch:
 
 jobs:
   build-and-upload:
     runs-on: macos-14
+
+    env:
+      SCHEME: ExpirationDateManager
+      BUNDLE_ID: sw.iotalasab5.mules
+      TEAM_ID: Y65KPLRTB5
 
     steps:
       - name: Checkout repo
@@ -14,44 +19,92 @@ jobs:
       - name: Select Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: "16.2"   # можешь поставить latest-stable, но 16.2 уже точно есть
+          xcode-version: "16.2"
 
-      # 1) Импорт дистрибутивного сертификата (.p12) из секретов
+      # Дистрибутивный .p12 (Apple Distribution) из секретов
       - name: Import code signing certificate
         uses: apple-actions/import-codesign-certs@v2
         with:
           p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
           p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
 
-      # 2) Установка App Store provisioning-профиля из секрета
+      # Установка App Store provisioning-профиля + генерация ExportOptions.plist
       - name: Install provisioning profile
         run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 -D > ~/Library/MobileDevice/Provisioning\ Profiles/app.mobileprovision
+          set -euo pipefail
 
-      # 3) Сборка архива (Release, ручная подпись из настроек Xcode)
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+
+          # Декодируем профиль из секрета
+          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 -D > "$HOME/profile.mobileprovision"
+
+          # Парсим UUID и TeamIdentifier из профиля
+          PROFILE_PLIST="$(security cms -D -i "$HOME/profile.mobileprovision")"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< "$PROFILE_PLIST")
+          PROFILE_TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print TeamIdentifier:0' /dev/stdin <<< "$PROFILE_PLIST")
+
+          echo "Using Provisioning Profile UUID: $PROFILE_UUID"
+          echo "TeamIdentifier from profile: $PROFILE_TEAM_ID"
+
+          # Кладём профиль туда, где его ждёт Xcode
+          cp "$HOME/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          # Пробрасываем в окружение для следующих шагов
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "PROFILE_TEAM_ID=$PROFILE_TEAM_ID" >> "$GITHUB_ENV"
+
+          # Генерируем ExportOptions.plist под ручную подпись
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store</string>
+            <key>teamID</key><string>${PROFILE_TEAM_ID}</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>${BUNDLE_ID}</key><string>${PROFILE_UUID}</string>
+            </dict>
+            <key>stripSwiftSymbols</key><true/>
+            <key>destination</key><string>export</string>
+          </dict>
+          </plist>
+          EOF
+
+          /usr/bin/plutil -lint ExportOptions.plist
+
+      # Сборка архива (Release, manual signing, Distribution)
       - name: Build archive
         run: |
+          set -euo pipefail
+
           xcodebuild \
-             -scheme "ExpirationDateManager" \
-             -configuration Release \
-             -sdk iphoneos \
-             -archivePath $PWD/build/App.xcarchive \
-             -allowProvisioningUpdates \
-             DEVELOPMENT_TEAM=Y65KPLRTB5 \
-             PROVISIONING_PROFILE_SPECIFIER="WanderWalls" \
-             CODE_SIGN_STYLE=Manual \
-             PRODUCT_BUNDLE_IDENTIFIER=sw.iotalasab5.mules \
-             clean archive
-      # 4) Экспорт .ipa из архива
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$PWD/build/App.xcarchive" \
+            -allowProvisioningUpdates \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_UUID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            clean archive
+
+      # Экспорт .ipa из архива
       - name: Export IPA
         run: |
-          xcodebuild -exportArchive \
-            -archivePath $PWD/build/App.xcarchive \
-            -exportOptionsPlist ExportOptions.plist \
-            -exportPath $PWD/build/export
+          set -euo pipefail
 
-      # 5) Загрузка .ipa в TestFlight
+          xcodebuild -exportArchive \
+            -archivePath "$PWD/build/App.xcarchive" \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath "$PWD/build/export"
+
+          ls -lah "$PWD/build/export"
+
+      # Загрузка .ipa в TestFlight
       - name: Upload to TestFlight
         uses: apple-actions/upload-testflight-build@v3
         with:
